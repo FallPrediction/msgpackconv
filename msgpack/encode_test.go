@@ -3,115 +3,213 @@ package msgpack_test
 import (
 	"fmt"
 	"math"
+	. "msgpackconv/msgpack"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	. "msgpackconv/msgpack"
 )
 
-func TestStringFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`"a"`))), "a161", "test fixstr fail")
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte("\""+strings.Repeat("a", 32)+"\""))),
-		"d920"+strings.Repeat("61", 32),
-		"test str8 fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte("\""+strings.Repeat("a", int(math.Pow(2, 8)))+"\""))),
-		"da0100"+strings.Repeat("61", int(math.Pow(2, 8))),
-		"test str16 fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte("\""+strings.Repeat("a", int(math.Pow(2, 16)))+"\""))),
-		"db00010000"+strings.Repeat("61", int(math.Pow(2, 16))),
-		"test str32 fail",
-	)
+func TestFromJSONBasicType(t *testing.T) {
+	type args struct {
+		bytes []byte
+	}
+	tests := []struct {
+		name string
+		args args
+		want []byte
+	}{
+		{
+			"fixstr",
+			args{[]byte(`"a"`)},
+			[]byte{0xa1, 0x61},
+		},
+		{
+			"str8",
+			args{[]byte("\"" + strings.Repeat("a", 32) + "\"")},
+			append([]byte{0xd9, 0x20}, slices.Repeat([]byte{0x61}, 32)...),
+		},
+		{
+			"str16",
+			args{[]byte("\"" + strings.Repeat("a", int(math.Pow(2, 8))) + "\"")},
+			append([]byte{0xda, 0x01, 0x00}, slices.Repeat([]byte{0x61}, int(math.Pow(2, 8)))...),
+		},
+		{
+			"str32",
+			args{[]byte("\"" + strings.Repeat("a", int(math.Pow(2, 16))) + "\"")},
+			append([]byte{0xdb, 0x00, 0x01, 0x00, 0x00}, slices.Repeat([]byte{0x61}, int(math.Pow(2, 16)))...),
+		},
+		{
+			"positive fixint",
+			args{[]byte(`1`)},
+			[]byte{0x01},
+		},
+		{
+			"uint8",
+			args{[]byte(`128`)},
+			[]byte{0xcc, 0x80},
+		},
+		{
+			"uint16",
+			args{[]byte(`256`)},
+			[]byte{0xcd, 0x01, 0x00},
+		},
+		{
+			"uint32",
+			args{[]byte(`65536`)},
+			[]byte{0xce, 0x00, 0x01, 0x00, 0x00},
+		},
+		{
+			"uint64",
+			args{[]byte(`4294967296`)},
+			[]byte{0xcf, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00},
+		},
+		{
+			"negative fixint",
+			args{[]byte(`-1`)},
+			[]byte{0xff},
+		},
+		{
+			"int8",
+			args{[]byte(`-33`)},
+			[]byte{0xd0, 0xdf},
+		},
+		{
+			"int16",
+			args{[]byte(`-128`)},
+			[]byte{0xd1, 0xff, 0x80},
+		},
+		{
+			"int32",
+			args{[]byte(`-32768`)},
+			[]byte{0xd2, 0xff, 0xff, 0x80, 0x00},
+		},
+		{
+			"int64",
+			args{[]byte(`-2147483648`)},
+			[]byte{0xd3, 0xff, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00},
+		},
+		{
+			"float",
+			args{[]byte(`0.1`)},
+			[]byte{0xcb, 0x3f, 0xb9, 0x99, 0x99, 0x99, 0x99, 0x99, 0x9a},
+		},
+		{
+			"nil",
+			args{[]byte(`null`)},
+			[]byte{0xc0},
+		},
+		{
+			"false",
+			args{[]byte(`false`)},
+			[]byte{0xc2},
+		},
+		{
+			"true",
+			args{[]byte(`true`)},
+			[]byte{0xc3},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FromJSON(tt.args.bytes); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FromJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
-func TestIntegerFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`1`))), "01", "test positive fixint fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`128`))), "cc80", "test uint8 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`256`))), "cd0100", "test uint16 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`65536`))), "ce00010000", "test uint32 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`4294967296`))), "cf0000000100000000", "test uint64 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`-1`))), "ff", "test negative fixint fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`-33`))), "d0df", "test int8 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`-128`))), "d1ff80", "test int16 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`-32768`))), "d2ffff8000", "test int32 fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`-2147483648`))), "d3ffffffff80000000", "test int64 fail")
+func TestFromJSONArray(t *testing.T) {
+	getArgs := func(exp int) []byte {
+		arr := slices.Repeat([]string{"0"}, int(math.Pow(2, float64(exp))))
+		return []byte("[" + strings.Join(arr, ", ") + "]")
+	}
+	type args struct {
+		bytes []byte
+	}
+	tests := []struct {
+		name string
+		args args
+		want []byte
+	}{
+		{
+			"fixarray",
+			args{[]byte(`[]`)},
+			[]byte{0x90},
+		},
+		{
+			"array16",
+			args{getArgs(4)},
+			append([]byte{0xdc, 0x00, 0x10}, slices.Repeat([]byte{0x00}, int(math.Pow(2, 4)))...),
+		},
+		{
+			"array32",
+			args{getArgs(16)},
+			append([]byte{0xdd, 0x00, 0x01, 0x00, 0x00}, slices.Repeat([]byte{0x00}, int(math.Pow(2, 16)))...),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := FromJSON(tt.args.bytes); !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FromJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
 
-func TestFloatFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`0.1`))), "cb3fb999999999999a", "test float fail")
-}
-
-func TestNilFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`null`))), "c0", "test nil fail")
-}
-
-func TestBoolFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`false`))), "c2", "test false fail")
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`true`))), "c3", "test true fail")
-}
-
-func TestArrayFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`[]`))), "90", "test fixarray fail")
-	arr := slices.Repeat([]string{"0"}, int(math.Pow(2, 4)))
+func TestFromJSONMap(t *testing.T) {
+	// 注意 map 的結果不會按照原本的 field 順序
+	type args struct {
+		bytes []byte
+	}
+	tests := []struct {
+		name string
+		args args
+		want []byte
+	}{
+		{
+			"str fixmap",
+			args{[]byte(`{"str": "a"}`)},
+			[]byte{0x81, 0xa3, 0x73, 0x74, 0x72, 0xa1, 0x61},
+		},
+		{
+			"int fixmap",
+			args{[]byte(`{"int": 1}`)},
+			[]byte{0x81, 0xa3, 0x69, 0x6e, 0x74, 0x01},
+		},
+		{
+			"float fixmap",
+			args{[]byte(`{"float": 1.2}`)},
+			[]byte{0x81, 0xa5, 0x66, 0x6c, 0x6f, 0x61, 0x74, 0xcb, 0x3f, 0xf3, 0x33, 0x33, 0x33, 0x33, 0x33, 0x33},
+		},
+		{
+			"nil fixmap",
+			args{[]byte(`{"nil": null}`)},
+			[]byte{0x81, 0xa3, 0x6e, 0x69, 0x6c, 0xc0},
+		},
+		{
+			"array fixmap",
+			args{[]byte(`{"array": [0,0]}`)},
+			[]byte{0x81, 0xa5, 0x61, 0x72, 0x72, 0x61, 0x79, 0x92, 0x00, 0x00},
+		},
+		{
+			"nested fixmap",
+			args{[]byte(`{"map": {"str": "a"}}`)},
+			[]byte{0x81, 0xa3, 0x6d, 0x61, 0x70, 0x81, 0xa3, 0x73, 0x74, 0x72, 0xa1, 0x61},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FromJSON(tt.args.bytes)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FromJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte("["+strings.Join(arr, ", ")+"]"))),
-		"dc0010"+strings.Repeat("00", int(math.Pow(2, 4))),
-		"test array16 fail",
-	)
-	arr = slices.Repeat([]string{"0"}, int(math.Pow(2, 16)))
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte("["+strings.Join(arr, ", ")+"]"))),
-		"dd00010000"+strings.Repeat("00", int(math.Pow(2, 16))),
-		"test array32 fail",
-	)
-}
-
-func TestMapFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	// 注意 map 的結果不會按照順序
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"str": "a"}`))),
-		"81a3737472a161",
-		"test fixmap fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"int": 1}`))),
-		"81a3696e7401",
-		"test fixmap fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"float": 1.2}`))),
-		"81a5666c6f6174cb3ff3333333333333",
-		"test fixmap fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"nil": null}`))),
-		"81a36e696cc0",
-		"test fixmap fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"array": [0,0]}`))),
-		"81a56172726179920000",
-		"test fixmap fail",
-	)
-	assert.Equal(
-		fmt.Sprintf("%x", FromJSON([]byte(`{"map": {"str": "a"}}`))),
-		"81a36d617081a3737472a161",
-		"test fixmap fail",
-	)
-	assert.Equal(
+		t,
 		fmt.Sprintf("%x", FromJSON([]byte(`{
 			"a": 1,
 			"b": 1,
@@ -135,7 +233,27 @@ func TestMapFromJSON(t *testing.T) {
 	)
 }
 
-func TestEncodeFailFromJSON(t *testing.T) {
-	assert := assert.New(t)
-	assert.Equal(fmt.Sprintf("%x", FromJSON([]byte(`{`))), "", "test encode fail")
+func TestFromJSONFail(t *testing.T) {
+	type args struct {
+		bytes []byte
+	}
+	tests := []struct {
+		name string
+		args args
+		want []byte
+	}{
+		{
+			"invalid json",
+			args{[]byte(`{`)},
+			[]byte{},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := FromJSON(tt.args.bytes)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("FromJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
 }
